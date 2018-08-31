@@ -1,0 +1,10 @@
+etcd:
+  name:                        etcd-test
+  data_dir:                    ./data.etcd
+  cert_file:                   /Users/xyc/cfssl/serve.pem
+  key_file:                    /Users/xyc/cfssl/serve-key.pem
+  client_cert_auth:            true
+  initial_advertise_peer_urls: https://127.0.0.1:2380
+  listen_peer_urls:            https://127.0.0.1:2380
+  listen_client_urls:          https://127.0.0.1:2379
+  advertise_client_urls:       https://127.0.0.1:2379
