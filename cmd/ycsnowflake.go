@@ -15,7 +15,10 @@ import (
 	"encoding/json"
 	"time"
 	"log"
+	"strings"
 )
+
+const maxEndureMs = 5
 
 type YCSnowflakeConfig struct {
 	enableTLS      *bool
@@ -24,12 +27,15 @@ type YCSnowflakeConfig struct {
 	clientKey      *string
 	clientCertAuth *bool
 	workerID       *int
+	clusterHosts   []string
 }
 
 func NewYCSnowflakeConfig() (*YCSnowflakeConfig) {
 	cfg := &YCSnowflakeConfig{}
 	return cfg
 }
+
+var clusterHosts *string
 
 func (cfg *YCSnowflakeConfig) parse() {
 	cfg.workerID = flag.Int("worker-id", 0, "")
@@ -38,11 +44,16 @@ func (cfg *YCSnowflakeConfig) parse() {
 	cfg.caCertFile = flag.String("cacert", "", "")
 	cfg.clientCert = flag.String("client-cert", "", "")
 	cfg.clientKey = flag.String("client-key", "", "")
+	clusterHosts = flag.String("cluster-host", "", "")
 	flag.Parse()
 }
 
 func (cfg *YCSnowflakeConfig) clientTLSCfgEmpty() bool {
 	return *cfg.caCertFile == "" || *cfg.clientCert == "" || *cfg.clientKey == ""
+}
+
+func (cfg *YCSnowflakeConfig) clusterHostsEmpty() bool {
+	return len(cfg.clusterHosts) <= 0 || cfg.clusterHosts[0] == ""
 }
 
 func (cfg *YCSnowflakeConfig) fromEnvTLSCfg() {
@@ -58,25 +69,34 @@ func (cfg *YCSnowflakeConfig) workerInValid() bool {
 }
 
 type YCSnowflake struct {
-	etcdKey string
-	ctx     context.Context
-	Config  *YCSnowflakeConfig
-	etcdCli client.Client
+	etcdKey      string
+	temporaryKey string
+	ctx          context.Context
+	Config       *YCSnowflakeConfig
+	etcdCli      client.Client
 }
 
 func NewYCSnowflake(cfg *YCSnowflakeConfig) *YCSnowflake {
 	return &YCSnowflake{
-		etcdKey: "/yc_snowflake_forever",
-		ctx:     context.Background(),
-		Config:  cfg,
+		etcdKey:      "/yc_snowflake_forever",
+		temporaryKey: "/yc_snowflake_temporary",
+		ctx:          context.Background(),
+		Config:       cfg,
 	}
 }
 
 func (ysf *YCSnowflake) Start() {
 	ysf.Config.parse()
 
+	ysf.Config.clusterHosts = strings.Split(*clusterHosts, ",")
+
 	if ysf.Config.workerInValid() {
 		fmt.Fprintf(os.Stderr, "please provide the worker id\n")
+		os.Exit(1)
+	}
+
+	if ysf.Config.clusterHostsEmpty() {
+		fmt.Fprintf(os.Stderr, "please provide connect hosts\n")
 		os.Exit(1)
 	}
 
@@ -113,8 +133,12 @@ func (ysf *YCSnowflake) Start() {
 
 	// 新的机器节点
 	if resp, ok := ysf.workerNotFoundInEtcd(); ok {
-		// TODO 错误处理
-		ysf.createWorkerInEtcd()
+		// 创建节点错误
+		if resp, err := ysf.createWorkerInEtcd(); err != nil {
+			log.Fatal(err)
+		} else {
+			fmt.Printf("create worker in etcd: %v", *resp)
+		}
 	} else {
 		// 获取当前机器节点的值
 		// TODO 错误处理
@@ -128,9 +152,16 @@ func (ysf *YCSnowflake) Start() {
 			log.Fatal(err)
 		}
 		// 发生了回拨，此刻时间小于上次发号时间
-		if timestamp() < lastTimestamp {
-			fmt.Println("启动失败警告")
+		ts := timestamp()
+		if ts < lastTimestamp {
+			//时间偏差大小小于5ms，则等待两倍时间
+			if offset := lastTimestamp - ts; offset <= maxEndureMs {
+				time.Sleep(time.Millisecond * time.Duration(offset<<1))
+			} else {
+				log.Fatalf("时间不正确!")
+			}
 		} else {
+			// 确认当前时间是否是正确的
 			fmt.Println("校验时间")
 		}
 
@@ -143,7 +174,7 @@ func (ysf *YCSnowflake) Start() {
 
 func (ysf *YCSnowflake) initClient() error {
 	cfg := client.Config{
-		Endpoints: []string{"https://127.0.0.1:2379"},
+		Endpoints: ysf.Config.clusterHosts,
 	}
 
 	cli, err := client.New(cfg)
@@ -178,7 +209,7 @@ func (ysf *YCSnowflake) initTLSClient() error {
 	}
 
 	cfg := client.Config{
-		Endpoints: []string{"https://127.0.0.1:2379"},
+		Endpoints: ysf.Config.clusterHosts,
 		Transport: tr,
 	}
 
@@ -215,7 +246,7 @@ func (ysf *YCSnowflake) initTLSCertClient() error {
 	}
 
 	cfg := client.Config{
-		Endpoints: []string{"https://127.0.0.1:2379"},
+		Endpoints: ysf.Config.clusterHosts,
 		Transport: tr,
 	}
 
@@ -251,6 +282,17 @@ func (ysf *YCSnowflake) workerNotFoundInEtcd() (*client.Response, bool) {
 		return nil, true
 	}
 	return resp, false
+}
+
+func (ysf *YCSnowflake) errHandler(err error) {
+	if err != nil {
+		switch err {
+		case context.Canceled:
+			log.Fatalf("ctx is canceled by another routine: %v", err)
+		case context.DeadlineExceeded:
+			log.Fatalf("ctx is attached with a deadline is exceeded: %v", err)
+		}
+	}
 }
 
 func keyNotFound(err error) bool {
@@ -302,4 +344,9 @@ func (ysf *YCSnowflake) reportTimestamp() {
 
 func timestamp() int64 {
 	return time.Now().UnixNano() / int64(time.Millisecond)
+}
+
+func (ysf *YCSnowflake) checkSystemTimestamp() {
+	api := client.NewKeysAPI(ysf.etcdCli)
+	api.Get(ysf.ctx, ysf.temporaryKey, nil)
 }

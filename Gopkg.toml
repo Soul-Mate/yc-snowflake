@@ -25,10 +25,11 @@
 #   unused-packages = true
 
 
-[prune]
-  go-tests = true
-  unused-packages = true
+#[prune]
+#  go-tests = true
+#  unused-packages = true
 
+required = ["github.com/etcd-io/etcd/clientv3"]
 
 [[constraint]]
   name = "github.com/coreos/etcd"
