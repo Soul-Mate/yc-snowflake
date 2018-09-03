@@ -1,0 +1,11 @@
+syntax = "proto3";
+
+message Void {}
+
+message SysTimestamp {
+    uint64 timestamp = 1;
+}
+
+service TaskService {
+    rpc GetSysTimestamp(Void) returns (SysTimestamp);
+}

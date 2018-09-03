@@ -21,6 +21,8 @@ import (
 const maxEndureMs = 5
 
 type YCSnowflakeConfig struct {
+	rpcHost        *string
+	rpcPort        *string
 	enableTLS      *bool
 	caCertFile     *string
 	clientCert     *string
@@ -44,6 +46,8 @@ func (cfg *YCSnowflakeConfig) parse() {
 	cfg.caCertFile = flag.String("cacert", "", "")
 	cfg.clientCert = flag.String("client-cert", "", "")
 	cfg.clientKey = flag.String("client-key", "", "")
+	cfg.rpcHost = flag.String("rpc-host", "", "")
+	cfg.rpcPort = flag.String("rpc-port", "", "")
 	clusterHosts = flag.String("cluster-host", "", "")
 	flag.Parse()
 }
@@ -139,6 +143,9 @@ func (ysf *YCSnowflake) Start() {
 		} else {
 			fmt.Printf("create worker in etcd: %v", *resp)
 		}
+
+		// 做集群机器的时间校验
+		fmt.Println("校验时间")
 	} else {
 		// 获取当前机器节点的值
 		// TODO 错误处理
@@ -161,15 +168,20 @@ func (ysf *YCSnowflake) Start() {
 				log.Fatalf("时间不正确!")
 			}
 		} else {
-			// 确认当前时间是否是正确的
+			// 做集群机器的时间校验
 			fmt.Println("校验时间")
 		}
-
-		// 启动定时上报进程
-		go ysf.reportTimestamp()
-
-		time.Sleep(time.Hour)
 	}
+
+	// 启动定时上报进程
+	go ysf.reportTimestamp()
+
+	// 将rpc信息写入到temporary中
+
+	// 启动rpc server
+
+	// 启动http server
+	time.Sleep(time.Hour)
 }
 
 func (ysf *YCSnowflake) initClient() error {
@@ -344,6 +356,45 @@ func (ysf *YCSnowflake) reportTimestamp() {
 
 func timestamp() int64 {
 	return time.Now().UnixNano() / int64(time.Millisecond)
+}
+
+func (ysf *YCSnowflake) temporaryKeyNotFound() bool {
+	api := client.NewKeysAPI(ysf.etcdCli)
+	_, err := api.Get(ysf.ctx, ysf.temporaryKey, &client.GetOptions{
+		Recursive: false,
+		Sort:      false,
+		Quorum:    true,
+	})
+
+	if keyNotFound(err) {
+		return true
+	}
+	return false
+}
+
+func (ysf *YCSnowflake) createNodeInfoInEtcd() error{
+	api := client.NewKeysAPI(ysf.etcdCli)
+	if ysf.temporaryKeyNotFound() {
+		_, err := api.Set(ysf.ctx, ysf.temporaryKey, "", &client.SetOptions{
+			Dir: true,
+		})
+		if err != nil {
+			return err
+		}
+	}
+	key := ysf.temporaryKey + "/" + strconv.Itoa(*ysf.Config.workerID)
+	b, err := json.Marshal(map[string]string{
+		"host": *ysf.Config.rpcHost,
+		"port": *ysf.Config.rpcPort,
+	})
+	if err != nil {
+		return err
+	}
+	_, err = api.Set(ysf.ctx, key, string(b), &client.SetOptions{
+		Dir:false,
+	})
+
+	return err
 }
 
 func (ysf *YCSnowflake) checkSystemTimestamp() {

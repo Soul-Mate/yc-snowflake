@@ -29,8 +29,9 @@
 #  go-tests = true
 #  unused-packages = true
 
-required = ["github.com/etcd-io/etcd/clientv3"]
+required = ["github.com/etcd-io/etcd/clientv3", "google.golang.org/grpc"]
 
 [[constraint]]
   name = "github.com/coreos/etcd"
   version = "3.3.9"
+
