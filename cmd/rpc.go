@@ -5,17 +5,18 @@ import (
 	"google.golang.org/grpc"
 	"context"
 	"time"
+	"log"
 )
 
 type CheckSysTimestampServer struct {
-	ip string
+	host string
 	port string
 	address string
 }
 
-func newCheckSysTimestampServer(ip, port string) *CheckSysTimestampServer {
+func newCheckSysTimestampServer(host, port string) *CheckSysTimestampServer {
 	return &CheckSysTimestampServer{
-		ip:ip,
+		host:host,
 		port:port,
 	}
 }
@@ -27,11 +28,13 @@ func (s *CheckSysTimestampServer) GetSysTimestamp(ctx context.Context, void *Voi
 }
 
 func (s *CheckSysTimestampServer) start() error {
-	lis, err := net.Listen("tcp", s.address)
+	address := s.host + ":" + s.port
+	lis, err := net.Listen("tcp", address)
 	if err != nil {
 		return err
 	}
 	rpcServer := grpc.NewServer()
 	RegisterTaskServiceServer(rpcServer, s)
+	log.Printf("rpc server start:\n\thost:\t%s\n\tport:\t%s", s.host, s.port)
 	return rpcServer.Serve(lis)
 }
