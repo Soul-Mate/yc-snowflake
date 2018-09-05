@@ -18,6 +18,7 @@ import (
 	"errors"
 	"github.com/etcd-io/etcd/clientv3"
 	"unsafe"
+	"math"
 )
 
 const maxEndureMs = 5
@@ -462,6 +463,7 @@ func (ysf *YCSnowflake) unMarshalWorkerValue(value []byte) (*WorkerValue, error)
 func (ysf *YCSnowflake) checkSysTimestamp() error {
 	var (
 		successWorkerServer []*WorkerServerValue
+		successWorkerCallResult []*SysTimestamp
 		errorNodeCount      int
 	)
 	kv := clientv3.NewKV(ysf.client)
@@ -489,9 +491,33 @@ func (ysf *YCSnowflake) checkSysTimestamp() error {
 			timestamp())
 		return err
 	}
-	// 如果失败的大于半数, 则取消校验
-	if errorNodeCount > int((res.Count-1)/2+1) {
+
+	if errorNodeCount > int(res.Count/2+1) {
 		return errors.New("more than half failed to parse multiple worker server data")
+	}
+
+	for _, node := range successWorkerServer {
+		go func() {
+			checkSysTimestampClient := newCheckSysTimestampClient("ipv4", node.RPCHost, node.RPCPort)
+			cli, _ := checkSysTimestampClient.CreateClient()
+			result, _ := checkSysTimestampClient.Call(cli)
+			successWorkerCallResult = append(successWorkerCallResult, result)
+		}()
+	}
+
+	if len(successWorkerCallResult) <= int(res.Count/2+1) {
+
+	}
+	var (
+		avg uint64
+		total uint64
+	)
+	for _, result := range successWorkerCallResult {
+		total += result.Timestamp
+	}
+	avg = total / uint64(len(successWorkerCallResult))
+	if math.Abs(float64(timestamp() - avg)) < maxEndureMs {
+
 	}
 	fmt.Println(res.Kvs)
 	return nil
@@ -534,6 +560,7 @@ func (ysf *YCSnowflake) unMarshalWorkerServerValue(value []byte) (*WorkerServerV
 
 	return workerServerValue, nil
 }
+
 
 func keyNotFound(err error) bool {
 	if err != nil {
