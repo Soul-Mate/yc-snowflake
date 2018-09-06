@@ -13,12 +13,6 @@ type CheckSysTimestampServer struct {
 	port string
 }
 
-type CheckSysTimestampClient struct {
-	host     string
-	port     string
-	protocol string
-}
-
 func newCheckSysTimestampServer(host, port string) *CheckSysTimestampServer {
 	return &CheckSysTimestampServer{
 		host: host,
@@ -33,7 +27,7 @@ func (s *CheckSysTimestampServer) GetSysTimestamp(ctx context.Context, void *Voi
 }
 
 func (s *CheckSysTimestampServer) start() error {
-	address := s.host + ":" + s.port
+	address := ":" + s.port
 	lis, err := net.Listen("tcp", address)
 	if err != nil {
 		return err
@@ -44,26 +38,13 @@ func (s *CheckSysTimestampServer) start() error {
 	return rpcServer.Serve(lis)
 }
 
-func newCheckSysTimestampClient(protocol, host, port string) *CheckSysTimestampClient{
-	return &CheckSysTimestampClient{
-		protocol:protocol,
-		host:host,
-		port:port,
-	}
-}
-
-func (s *CheckSysTimestampClient) CreateClient() (TaskServiceClient, error) {
-	ctx, _ := context.WithTimeout(context.Background(), time.Second * 3)
-	cc, err := grpc.DialContext(ctx, s.protocol + ":" + s.host + ":" + s.port)
+func rpcGetSysTimestamp(host, port string) (*SysTimestamp, error) {
+	ctx, _ := context.WithTimeout(context.Background(), time.Second*3)
+	cc, err := grpc.DialContext(ctx, host+":"+port, grpc.WithInsecure())
 	if err != nil {
 		return nil, err
 	}
 	defer cc.Close()
 	cli := NewTaskServiceClient(cc)
-	return cli, nil
-}
-
-func (s *CheckSysTimestampClient) Call(cli TaskServiceClient) (*SysTimestamp, error) {
-	ctx, _ := context.WithTimeout(context.Background(), time.Second * 3)
 	return cli.GetSysTimestamp(ctx, &Void{})
 }
