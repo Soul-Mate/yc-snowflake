@@ -67,3 +67,7 @@ func (sf *SnowFlake) tilNextMillSecond(ts uint64) uint64 {
 func (sf *SnowFlake) timestamp() uint64 {
 	return uint64(time.Now().UnixNano()/int64(nano2Mill) - epoch)
 }
+
+func Timestamp() uint64 {
+	return uint64(time.Now().UnixNano() / int64(time.Millisecond))
+}

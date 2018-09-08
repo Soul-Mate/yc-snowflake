@@ -1,35 +1,42 @@
 package main
 
 import (
-	"github.com/Soul-Mate/yc-snowflake/snowflake"
-	"os"
+	"context"
+	"crypto/tls"
+	"crypto/x509"
+	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
-	"io/ioutil"
-	"github.com/coreos/etcd/client"
-	"crypto/x509"
-	"crypto/tls"
-	"context"
-	"strconv"
-	"encoding/json"
-	"time"
-	"log"
-	"strings"
-	"errors"
+	"github.com/Soul-Mate/yc-snowflake/http"
+	"github.com/Soul-Mate/yc-snowflake/pb"
+	"github.com/Soul-Mate/yc-snowflake/grpc/client"
+	"github.com/Soul-Mate/yc-snowflake/grpc/server"
+	"github.com/Soul-Mate/yc-snowflake/snowflake"
 	"github.com/etcd-io/etcd/clientv3"
-	"unsafe"
+	"io/ioutil"
+	"log"
 	"math"
+	"os"
+	"strconv"
+	"strings"
+	"time"
+	"unsafe"
 )
 
-const maxEndureMs = 5
-
 const (
+	// 最大忍受时间发生回拨时常 单位(毫秒)
+	maxEndureMs = 5
+	// 最大系统时间误差 单位(毫秒)
+	maxSysTimeErrorMs        = 100
 	WORKER_RPC_HOST_DEFAULT  = "127.0.0.1"
 	WORKER_RPC_PORT_DEFAULT  = "3212"
+	WORKER_HTTP_PORT_DEFAULT = "3213"
 	CONF_FILE_ENV_KEY        = "YC_SNOWFLAKE_CONF"
 	WORKER_ID_ENV_KEY        = "YC_SNOWFLAKE_WORKER_ID"
 	WORKER_RPC_HOST_ENV_KEY  = "YC_SNOWFLAKE_WORKER_RPC_HOST"
 	WORKER_RPC_PORT_ENV_KEY  = "YC_SNOWFLAKE_WORKER_RPC_PORT"
+	WORKER_HTTP_PORT_ENV_KEY = "YC_SNOWFLAKE_WORKER_HTTP_PORT"
 	CLUSTER_ENV_KEY          = "YC_SNOWFLAKE_CLUSTER"
 	CA_FILE_ENV_KEY          = "ETCD_TRUSTED_CA_FILE"
 	CLIENT_CERT_FILE_ENV_KEY = "ETCD_CERT_FILE"
@@ -37,6 +44,7 @@ const (
 )
 
 type FileConfig struct {
+	LogFile        string `json:"log_file"`
 	WorkerId       int    `json:"worker_id"`
 	SkipCheck      bool   `json:"no_worker_skip_check"`
 	EnableTLS      bool   `json:"enable_tls"`
@@ -49,37 +57,40 @@ type FileConfig struct {
 	Rpc            struct {
 		Host string `json:"host"`
 		Port string `json:"port"`
-	} `json:"rpc"`
+	} `json:"grpc"`
 	Http struct {
-		Host string `json:"host"`
-		Port string `json:"port"`
+		Host     string `json:"host"`
+		Port     string `json:"port"`
+		CertAuth bool   `json:"cert_auth"`
+		CertFile string `json:"cert_file"`
+		KeyFile  string `json:"key_file"`
 	} `json:"http"`
 }
 
 type YCSnowflakeConfig struct {
-	configFile     string
-	workerId       int
-	skipCheck      bool
-	enableTLS      bool
-	insecure       bool
-	ca             string
-	clientCertAuth bool
-	clientCert     string
-	clientKey      string
-	cluster        string
-	rpcHost        string
-	rpcPort        string
-	httpHost       string
-	httpPort       string
-}
-
-func NewYCSnowflakeConfig() (*YCSnowflakeConfig) {
-	cfg := &YCSnowflakeConfig{}
-	return cfg
+	configFile      string
+	logFile         string
+	workerId        int
+	skipCheck       bool
+	enableTLS       bool
+	insecure        bool
+	ca              string
+	clientCertAuth  bool
+	clientCert      string
+	clientKey       string
+	cluster         string
+	rpcHost         string
+	rpcPort         string
+	httpHost        string
+	httpPort        string
+	httpCertAuth    bool
+	httpTLSCertFile string
+	httpTLSKeyFile  string
 }
 
 func (cfg *YCSnowflakeConfig) parse() {
 	flag.StringVar(&cfg.configFile, "config-file", "", "")
+	flag.StringVar(&cfg.logFile, "log-file", "", "")
 	flag.IntVar(&cfg.workerId, "WorkerValue-id", 0, "")
 	flag.BoolVar(&cfg.skipCheck, "no-worker-skip-check", false, "")
 	flag.BoolVar(&cfg.enableTLS, "enable-tls", false, "")
@@ -89,10 +100,13 @@ func (cfg *YCSnowflakeConfig) parse() {
 	flag.StringVar(&cfg.clientCert, "cert-file", "", "")
 	flag.StringVar(&cfg.clientKey, "key-file", "", "")
 	flag.StringVar(&cfg.cluster, "initial-cluster", "", "")
-	flag.StringVar(&cfg.rpcHost, "WorkerValue-rpc-host", "", "")
-	flag.StringVar(&cfg.rpcPort, "WorkerValue-rpc-port", "", "")
-	flag.StringVar(&cfg.httpHost, "WorkerValue-http-host", "", "")
-	flag.StringVar(&cfg.httpPort, "WorkerValue-http-port", "", "")
+	flag.StringVar(&cfg.rpcHost, "worker-grpc-host", "", "")
+	flag.StringVar(&cfg.rpcPort, "worker-grpc-port", "", "")
+	flag.StringVar(&cfg.httpHost, "http-host", "", "")
+	flag.StringVar(&cfg.httpPort, "http-port", "", "")
+	flag.BoolVar(&cfg.httpCertAuth, "http-cert-auth", false, "")
+	flag.StringVar(&cfg.httpTLSCertFile, "http-cert-file", "", "")
+	flag.StringVar(&cfg.httpTLSKeyFile, "http-key-file", "", "")
 	flag.Parse()
 }
 
@@ -105,6 +119,7 @@ func (cfg *YCSnowflakeConfig) initConfigFromFile() error {
 	if err = json.Unmarshal(b, fc); err != nil {
 		return err
 	}
+	cfg.logFile = fc.LogFile
 	cfg.workerId = fc.WorkerId
 	cfg.skipCheck = fc.SkipCheck
 	cfg.enableTLS = fc.EnableTLS
@@ -118,6 +133,9 @@ func (cfg *YCSnowflakeConfig) initConfigFromFile() error {
 	cfg.rpcPort = fc.Rpc.Port
 	cfg.httpHost = fc.Http.Host
 	cfg.httpPort = fc.Http.Port
+	cfg.httpCertAuth = fc.Http.CertAuth
+	cfg.httpTLSCertFile = fc.Http.CertFile
+	cfg.httpTLSKeyFile = fc.Http.KeyFile
 	return nil
 }
 
@@ -130,9 +148,10 @@ type YCSnowflake struct {
 	etcdKey      string
 	temporaryKey string
 	ctx          context.Context
+	cancel       context.CancelFunc
 	Config       *YCSnowflakeConfig
 	client       *clientv3.Client
-	etcdCli      client.Client
+	logger       *WrapLog
 }
 
 type WorkerValue struct {
@@ -146,21 +165,75 @@ type WorkerServerValue struct {
 }
 
 func NewYCSnowflake(cfg *YCSnowflakeConfig) *YCSnowflake {
-	return &YCSnowflake{
-		etcdKey:      "/yc_snowflake_forever",
-		temporaryKey: "/yc_snowflake_temporary",
-		ctx:          context.Background(),
-		Config:       cfg,
-	}
+
+	ysf := new(YCSnowflake)
+	ysf.Config = cfg
+	ysf.etcdKey = "/yc_snowflake_forever"
+	ysf.temporaryKey = "/yc_snowflake_temporary"
+	ysf.ctx, ysf.cancel = context.WithCancel(context.Background())
+	return ysf
 }
 
 func (ysf *YCSnowflake) Start() {
+	var (
+		err error
+	)
+
 	ysf.Config.parse()
 
-	if cli, err := ysf.createClient(); err != nil {
-		log.Fatal(err)
+	// 从文件中解析程序配置
+	if ysf.Config.configFile == "" {
+		// 从环境变量中获得程序配置文件路径
+		if confEnv := os.Getenv(CONF_FILE_ENV_KEY); confEnv != "" {
+			ysf.Config.configFile = confEnv
+			if err = ysf.Config.initConfigFromFile(); err != nil {
+				log.Fatalf("init config file error: %v", err)
+			}
+		}
 	} else {
-		ysf.client = cli
+		if err = ysf.Config.initConfigFromFile(); err != nil {
+			log.Fatal("failed to initialize configuration")
+		}
+	}
+
+	// 验证worker id的合法性
+	if err = ysf.validatorWorkerId(); err != nil {
+		log.Fatal(err)
+	}
+
+	// grpc server host
+	// 默认使用 127.0.0.1
+	if ysf.Config.rpcHost == "" {
+		if rpcHostEnv := os.Getenv(WORKER_RPC_HOST_ENV_KEY); rpcHostEnv != "" {
+			ysf.Config.rpcHost = rpcHostEnv
+		} else {
+			ysf.Config.rpcHost = WORKER_RPC_HOST_DEFAULT
+		}
+	}
+
+	// grpc server port
+	// 默认使用端口 3212
+	if ysf.Config.rpcPort == "" {
+		if rpcPortEnv := os.Getenv(WORKER_RPC_PORT_ENV_KEY); rpcPortEnv != "" {
+			ysf.Config.rpcPort = rpcPortEnv
+		} else {
+			ysf.Config.rpcPort = WORKER_RPC_PORT_DEFAULT
+		}
+	}
+
+	// http server port
+	if ysf.Config.httpPort == "" {
+		if rpcPortEnv := os.Getenv(WORKER_HTTP_PORT_ENV_KEY); rpcPortEnv != "" {
+			ysf.Config.httpPort = rpcPortEnv
+		} else {
+			ysf.Config.httpPort = WORKER_HTTP_PORT_DEFAULT
+		}
+	}
+
+	// 创建etcd客户端
+	if ysf.client, err = ysf.createClient(); err != nil {
+		log.Fatal(err)
+
 	}
 
 	// 获取worker保存在etcd中的值
@@ -168,6 +241,12 @@ func (ysf *YCSnowflake) Start() {
 	if err != nil {
 		log.Fatal(err)
 	}
+
+	// 初始化wrap log
+	if ysf.logger, err = newWrapLog(ysf.Config.logFile); err != nil {
+		log.Fatal(err)
+	}
+
 	// 新的节点
 	if w == nil && err == nil {
 		// 校验当前节点系统时间
@@ -197,68 +276,26 @@ func (ysf *YCSnowflake) Start() {
 	// 定时上报系统时间戳
 	go ysf.reportTimestamp(ysf.ctx)
 
+	// 启动http server
+	go ysf.startHttpServer()
+
 	// 设置节点服务信息
 	if err = ysf.putWorkerServerValue(); err != nil {
 		log.Fatal(err)
 	}
 
-	rpcServe := newCheckSysTimestampServer(ysf.Config.rpcHost, ysf.Config.rpcPort)
-
-	if err = rpcServe.start(); err != nil {
+	if err = server.Server(ysf.Config.rpcHost, ysf.Config.rpcPort); err != nil {
 		log.Fatal(err)
 	}
 }
 
 func (ysf *YCSnowflake) createClient() (*clientv3.Client, error) {
-	var err error
-
-	// 从文件中解析程序配置
-	if ysf.Config.configFile == "" {
-		// 从环境变量中获得程序配置文件路径
-		if confEnv := os.Getenv(CONF_FILE_ENV_KEY); confEnv != "" {
-			ysf.Config.configFile = confEnv
-
-			if err = ysf.Config.initConfigFromFile(); err != nil {
-				return nil, err
-			}
-		}
-	} else {
-		if err = ysf.Config.initConfigFromFile(); err != nil {
-			return nil, err
-		}
-	}
-
-	// 验证worker id的合法性
-	if err = ysf.validatorWorkerId(); err != nil {
-		return nil, err
-	}
-
 	// etcd 集群地址
 	if ysf.Config.cluster == "" {
 		if clusterEnv := os.Getenv(CLUSTER_ENV_KEY); clusterEnv != "" {
 			ysf.Config.cluster = clusterEnv
 		} else {
 			return nil, errors.New("missing etcd cluster address")
-		}
-	}
-
-	// rpc server host
-	// 默认使用 127.0.0.1
-	if ysf.Config.rpcHost == "" {
-		if rpcHostEnv := os.Getenv(WORKER_RPC_HOST_ENV_KEY); rpcHostEnv != "" {
-			ysf.Config.rpcHost = rpcHostEnv
-		} else {
-			ysf.Config.rpcHost = WORKER_RPC_HOST_DEFAULT
-		}
-	}
-
-	// rpc server port
-	// 默认使用端口 3212
-	if ysf.Config.rpcPort == "" {
-		if rpcPortEnv := os.Getenv(WORKER_RPC_PORT_ENV_KEY); rpcPortEnv != "" {
-			ysf.Config.rpcPort = rpcPortEnv
-		} else {
-			ysf.Config.rpcPort = WORKER_RPC_PORT_DEFAULT
 		}
 	}
 
@@ -396,7 +433,7 @@ func (ysf *YCSnowflake) validatorClientTLSConfig() error {
 func (ysf *YCSnowflake) getWorkerValue() (*WorkerValue, error) {
 	kv := clientv3.NewKV(ysf.client)
 	key := ysf.workerKey()
-	res, err := kv.Get(ysf.ctx, key)
+	res, err := kv.Get(context.Background(), key)
 	if err != nil {
 		return nil, err
 	}
@@ -409,7 +446,7 @@ func (ysf *YCSnowflake) getWorkerValue() (*WorkerValue, error) {
 					return nil, err
 				}
 
-				if res, err = kv.Get(ysf.ctx, key); err != nil {
+				if res, err = kv.Get(context.Background(), key); err != nil {
 					return nil, err
 				}
 
@@ -432,7 +469,7 @@ func (ysf *YCSnowflake) putWorkerValue() error {
 	}
 	key := ysf.workerKey()
 	kv := clientv3.NewKV(ysf.client)
-	_, err = kv.Put(ysf.ctx, key, value)
+	_, err = kv.Put(context.Background(), key, value)
 
 	if err != nil {
 		return err
@@ -475,11 +512,10 @@ func (ysf *YCSnowflake) unMarshalWorkerValue(value []byte) (*WorkerValue, error)
 func (ysf *YCSnowflake) checkSysTimestamp() error {
 	var (
 		successWorkerServer       []*WorkerServerValue
-		successWorkerSysTimestamp []*SysTimestamp
-		errorNodeCount            int
+		successWorkerSysTimestamp []*pb.SysTimestamp
 	)
 	kv := clientv3.NewKV(ysf.client)
-	res, err := kv.Get(ysf.ctx, ysf.temporaryKey, clientv3.WithPrefix(),
+	res, err := kv.Get(context.Background(), ysf.temporaryKey, clientv3.WithPrefix(),
 		clientv3.WithSort(clientv3.SortByKey, clientv3.SortAscend))
 
 	if err != nil {
@@ -488,14 +524,11 @@ func (ysf *YCSnowflake) checkSysTimestamp() error {
 
 	for _, item := range res.Kvs {
 		w, err := ysf.unMarshalWorkerServerValue(item.Value)
-		if err != nil {
-			// TODO 记录日志
-			errorNodeCount++
-		} else if string(item.Key) != ysf.workerTemporaryKey() {
+		if string(item.Key) != ysf.workerTemporaryKey() && err == nil {
 			successWorkerServer = append(successWorkerServer, w)
 		}
 	}
-	fmt.Println(res.Kvs)
+
 	if res.Count <= 0 || len(successWorkerServer) <= 0 {
 		if ysf.Config.skipCheck {
 			return nil
@@ -508,22 +541,28 @@ func (ysf *YCSnowflake) checkSysTimestamp() error {
 		return err
 	}
 
-	if errorNodeCount > int(res.Count/2+1) {
-		return errors.New("more than half failed to parse multiple worker server data")
-	}
-
 	for _, node := range successWorkerServer {
-		sysTimestamp, err := rpcGetSysTimestamp(node.RPCHost, node.RPCPort)
-		if err == nil {
-			fmt.Printf("get sys timestamp: %v\n", sysTimestamp)
-			successWorkerSysTimestamp = append(successWorkerSysTimestamp, sysTimestamp)
+		rpcClient, err := client.NewClient(node.RPCHost, node.RPCPort, client.WithTimeout(time.Second * 3))
+		if err != nil {
+			ysf.logger.Printf(LErr, "grpc client(%s:%s) init error: %v",
+				node.RPCHost, node.RPCPort, err)
 		} else {
-			log.Println(err)
+			sysTimestamp, err := rpcClient.GetSysTimestamp()
+			if err != nil {
+				ysf.logger.Printf(LErr, "grpc client(%s:%s) call GetSysTimestamp error: %v",
+					node.RPCHost, node.RPCPort, err)
+			} else {
+				successWorkerSysTimestamp = append(successWorkerSysTimestamp, sysTimestamp)
+			}
+			if err = rpcClient.Close(); err != nil {
+				ysf.logger.Printf(LErr, "grpc client(%s:%s) close error: %v",
+					node.RPCHost, node.RPCPort, err)
+			}
 		}
 	}
 
-	if len(successWorkerSysTimestamp) < int(res.Count/2+1) {
-		return errors.New("more than half of the node calls failed")
+	if len(successWorkerSysTimestamp) <= 0 {
+		return nil
 	}
 
 	var (
@@ -537,11 +576,12 @@ func (ysf *YCSnowflake) checkSysTimestamp() error {
 
 	avg = total / uint64(len(successWorkerSysTimestamp))
 
+	ysf.logger.Printf(LDebug, "求得平均值误差: %d", avg)
+
 	// 误差在100毫秒以内
-	if math.Abs(float64(timestamp()-avg)) > 100 {
+	if math.Abs(float64(timestamp()-avg)) > maxSysTimeErrorMs {
 		return errors.New("the node system timestamp error exceeds the threshold")
 	}
-
 	return nil
 }
 
@@ -553,7 +593,7 @@ func (ysf *YCSnowflake) putWorkerServerValue() error {
 	}
 
 	key := ysf.temporaryKey + "/" + strconv.Itoa(ysf.Config.workerId)
-	_, err = kv.Put(ysf.ctx, key, value)
+	_, err = kv.Put(context.Background(), key, value)
 	if err != nil {
 		return err
 	}
@@ -584,23 +624,40 @@ func (ysf *YCSnowflake) unMarshalWorkerServerValue(value []byte) (*WorkerServerV
 }
 
 func (ysf *YCSnowflake) reportTimestamp(ctx context.Context) {
+	done := false
 	t := time.Tick(time.Second * 3)
 	for {
 		select {
 		case <-t:
 			if err := ysf.putWorkerValue(); err != nil {
-				log.Printf("report timestamp error: %v", err)
+				ysf.logger.Printf(LDebug, "[worker-%d]: report timestamp error: %v", err, ysf.Config.workerId)
 			} else {
-				log.Printf("report timestamp success.")
+				ysf.logger.Printf(LDebug, "[worker-%d]: report timestamp success.", ysf.Config.workerId)
 			}
 		case <-ctx.Done():
-			log.Printf("report done.")
-			break
+			ysf.logger.Printf(LDebug, "report done.")
+			done = true
 		default:
+		}
+		if done {
+			break
 		}
 	}
 }
 
 func timestamp() uint64 {
 	return uint64(time.Now().UnixNano() / int64(time.Millisecond))
+}
+
+func (ysf *YCSnowflake) startHttpServer() {
+	if ysf.Config.httpCertAuth {
+		err := http.ServerTLS(ysf.Config.httpHost, ysf.Config.httpPort, ysf.Config.httpTLSCertFile, ysf.Config.httpTLSKeyFile, ysf.Config.workerId)
+		if err != nil {
+			log.Fatalf("start https server error: %v", err)
+		}
+	}
+	if err := http.Server(ysf.Config.httpHost, ysf.Config.httpPort, ysf.Config.workerId); err != nil {
+		ysf.cancel()
+		log.Fatalf("start https server error: %v", err)
+	}
 }

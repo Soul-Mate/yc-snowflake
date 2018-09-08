@@ -1,8 +1,7 @@
 package main
 
 func main() {
-	cfg := NewYCSnowflakeConfig()
-	ycSf := NewYCSnowflake(cfg)
-	ycSf.Start()
+	ysf := NewYCSnowflake(&YCSnowflakeConfig{})
+	ysf.Start()
 }
 

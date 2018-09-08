@@ -1,0 +1,23 @@
+syntax = "proto3";
+
+message Void {
+}
+
+message SysTimestamp {
+    uint64 timestamp = 1;
+}
+
+
+message RequestUUID {
+    uint64 workerId = 1;
+}
+
+message ResponseUUID {
+    uint64 uuid = 2;
+}
+
+service TaskService {
+    rpc GetSysTimestamp (Void) returns (SysTimestamp);
+
+    rpc GetUUID (RequestUUID) returns (ResponseUUID);
+}

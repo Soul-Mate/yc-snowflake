@@ -1,2 +1,4 @@
 .idea
 test/default.etcd
+*.log
+cmd/bin/yc_snowflake

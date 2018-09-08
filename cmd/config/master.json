@@ -1,0 +1,17 @@
+{
+  "log_file": "yc_snowflake.log",
+  "worker_id": 1,
+  "enable_tls": false,
+  "cluster": "http://192.168.10.10:2379,http://192.168.10.11:2379",
+  "no_worker_skip_check": false,
+  "rpc": {
+    "host": "192.168.10.10"
+  },
+  "http": {
+    "host":"192.168.10.10",
+    "port": "3123",
+    "cert_auth":true,
+    "cert_file":"/home/vagrant/cfssl/server.pem",
+    "key_file":"/home/vagrant/cfssl/server-key.pem"
+  }
+}
