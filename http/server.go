@@ -7,13 +7,30 @@ import (
 	"net/http"
 )
 
-func Server(host string, port string, workerId int) error{
+type options struct {
+	clientAuth bool
+	certFile   string
+	keyFile    string
+}
+
+type ServerOption func(*options)
+
+func TLS(certFile, keyFile string) ServerOption {
+	return func(opt *options) {
+		opt.certFile = certFile
+		opt.keyFile = keyFile
+	}
+}
+
+
+
+func Server(host string, port string, workerId int) error {
 	return server(host, port, "", "", workerId)
 }
 
-func ServerTLS(host, port, certFile, keyFile string, workerId int) error{
-	return server(host, port, certFile, keyFile, workerId)
-}
+//func ServerTLS(host, port, certFile, keyFile string, workerId int) error{
+//	return server(host, port, certFile, keyFile, workerId)
+//}
 
 func server(host, port, certFile, keyFile string, workerId int) error {
 	http.HandleFunc("/id", idHandler(workerId))
