@@ -1,10 +1,27 @@
 {
-  "log_file": "yc_snowflake.log",
+  "log_file": "",
   "worker_id": 2,
-  "enable_tls": false,
-  "etcd_cluster": "http://192.168.10.10:2379,http://192.168.10.11:2379",
   "no_worker_skip_check": false,
-  "rpc": {
-    "host": "192.168.10.11"
+  "etcd": {
+    "enable_tls": false,
+    "insecure": false,
+    "ca_cert": "",
+    "client_cert_auth": false,
+    "client_cert": "",
+    "client_key": "",
+    "cluster": "http://192.168.10.10:2379,http://192.168.10.11:2379"
+  },
+
+  "grpc": {
+    "host": "192.168.10.11",
+    "port": "3122"
+  },
+
+  "http": {
+    "host": "192.168.10.11",
+    "port": "3123",
+    "cert_auth": true,
+    "cert_file": "/home/vagrant/cfssl/server.pem",
+    "key_file": "/home/vagrant/cfssl/server-key.pem"
   }
 }

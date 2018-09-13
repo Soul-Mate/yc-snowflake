@@ -1,5 +1,5 @@
 {
-  "log_file": "yc_snowflake.log",
+  "log_file": "",
   "worker_id": 1,
   "enable_tls": false,
   "etcd_cluster": "http://192.168.10.10:2379,http://192.168.10.11:2379",
@@ -7,13 +7,13 @@
   "etcd": {
     "enable_tls": false,
     "insecure": false,
-    "ca_cert":"",
-    "client_cert_auth":false,
+    "ca_cert": "",
+    "client_cert_auth": false,
     "client_cert": "",
-    "client_key":"",
-    "cluster": "http://192.168.10.10:2379,http://192.168.10.11:2379",
+    "client_key": "",
+    "cluster": "http://192.168.10.10:2379,http://192.168.10.11:2379"
   },
-  "rpc": {
+  "grpc": {
     "host": "192.168.10.10",
     "port": "3122"
   },

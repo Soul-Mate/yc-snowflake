@@ -114,22 +114,25 @@ func (e *EtcdService) GetWorkerValue(workerId int) (*WorkerValue, error) {
 	if err != nil {
 		return nil, err
 	}
+
 	for _, item := range res.Kvs {
 		if string(item.Key) == key {
+			if wv, err := e.unMarshalWorkerValue(item.Value); err == nil {
+				return wv, err
+			}
+
 			// 如果解析失败, put新的值 防止kv被污染,然后进行重试
-			if _, err = e.unMarshalWorkerValue(item.Value); err != nil {
-				if err = e.PutWorkerValue(workerId); err != nil {
-					return nil, err
-				}
+			if err = e.PutWorkerValue(workerId); err != nil {
+				return nil, err
+			}
 
-				if res, err = kv.Get(context.Background(), key); err != nil {
-					return nil, err
-				}
+			if res, err = kv.Get(context.Background(), key); err != nil {
+				return nil, err
+			}
 
-				for _, item := range res.Kvs {
-					if string(item.Key) == key {
-						return e.unMarshalWorkerValue(item.Value)
-					}
+			for _, item := range res.Kvs {
+				if string(item.Key) == key {
+					return e.unMarshalWorkerValue(item.Value)
 				}
 			}
 		}
@@ -138,7 +141,7 @@ func (e *EtcdService) GetWorkerValue(workerId int) (*WorkerValue, error) {
 	return nil, nil
 }
 
-func (e *EtcdService) PutWorkerValue(workerId int) error{
+func (e *EtcdService) PutWorkerValue(workerId int) error {
 	value, err := e.marshalWorkerValue(workerId)
 	if err != nil {
 		return err
@@ -177,13 +180,26 @@ func (e *EtcdService) unMarshalWorkerValue(value []byte) (*WorkerValue, error) {
 	return w, nil
 }
 
-func (e *EtcdService) workerKey(workerId int) string{
+func (e *EtcdService) workerKey(workerId int) string {
 	return e.key + "/" + strconv.Itoa(workerId)
+}
+
+func (e *EtcdService) PutWorkerServerValue(workerId int, host, port string) error {
+	key := e.workerTemporaryKey(workerId)
+	if b, err := e.marshalWorkerServerValue(host, port); err != nil {
+		return err
+	} else {
+		kv := clientv3.NewKV(e.cli)
+		if _, err = kv.Put(context.Background(), key, string(b)); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (e *EtcdService) GetWorkerServerValues(workerId int) (*clientv3.GetResponse, []*WorkerServerValue, error) {
 	var (
-		successWorkerServer       []*WorkerServerValue
+		successWorkerServer []*WorkerServerValue
 	)
 	kv := clientv3.NewKV(e.cli)
 	res, err := kv.Get(context.Background(), e.temporaryKey, clientv3.WithPrefix(),
@@ -195,11 +211,21 @@ func (e *EtcdService) GetWorkerServerValues(workerId int) (*clientv3.GetResponse
 
 	for _, item := range res.Kvs {
 		w, err := e.unMarshalWorkerServerValue(item.Value)
+
 		if string(item.Key) != e.workerTemporaryKey(workerId) && err == nil {
 			successWorkerServer = append(successWorkerServer, w)
 		}
 	}
 	return res, successWorkerServer, nil
+}
+
+func (e *EtcdService) marshalWorkerServerValue(host, port string) ([]byte, error) {
+	ws := &WorkerServerValue{
+		RPCHost: host,
+		RPCPort: port,
+	}
+
+	return json.Marshal(ws)
 }
 
 func (e *EtcdService) unMarshalWorkerServerValue(value []byte) (*WorkerServerValue, error) {

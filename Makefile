@@ -1,6 +1,6 @@
 CMD_DIR = cmd
 BIN_DIR = $(CMD_DIR)/bin
-GO_SRCS = main.go ycsnowflake.go log.go
+GO_SRCS = main.go ycsnowflake.go
 SRCS = $(addprefix $(CMD_DIR)/, $(GO_SRCS))
 PROG = yc_snowflake
 CC = go build

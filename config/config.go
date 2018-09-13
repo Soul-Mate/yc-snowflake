@@ -73,7 +73,7 @@ type httpConfig struct {
 
 type Config struct {
 	ConfigFile string
-	logFile    string
+	LogFile    string
 	WorkerId   int
 	SkipCheck  bool
 	Etcd       EtcdConfig
@@ -83,7 +83,7 @@ type Config struct {
 
 func (conf *Config) ParseCmd() {
 	flag.StringVar(&conf.ConfigFile, "config-file", "", "use config file to init the program")
-	flag.StringVar(&conf.logFile, "log-file", "", "")
+	flag.StringVar(&conf.LogFile, "log-file", "", "")
 	flag.IntVar(&conf.WorkerId, "worker-id", 0, "")
 	flag.BoolVar(&conf.SkipCheck, "no-worker-skip-check", false, "")
 	flag.BoolVar(&conf.Etcd.EnableTLS, "etcd-enable-tls", false, "")
@@ -152,6 +152,19 @@ func (conf *Config) InitConfigFromFile() error {
 	if err = json.Unmarshal(b, fc); err != nil {
 		return fmt.Errorf("config.InitConfigFromFile error: %v\n", err)
 	}
+
+	conf.WorkerId = fc.WorkerId
+	conf.LogFile = fc.LogFile
+	conf.SkipCheck = fc.SkipCheck
+
+	conf.Etcd.Insecure = fc.Etcd.Insecure
+	conf.Etcd.CaFile = fc.Etcd.CACert
+	conf.Etcd.ClientAuth = fc.Etcd.ClientCertAuth
+	conf.Etcd.EnableTLS = fc.Etcd.EnableTLS
+	conf.Etcd.ClientCertFile = fc.Etcd.ClientCert
+	conf.Etcd.ClientKeyFile = fc.Etcd.ClientKey
+	conf.Etcd.Cluster = fc.Etcd.Cluster
+
 
 	conf.Http.Host = fc.Http.Host
 	conf.Http.Port = fc.Http.Port

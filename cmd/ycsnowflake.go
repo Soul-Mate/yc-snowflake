@@ -9,6 +9,7 @@ import (
 	"github.com/Soul-Mate/yc-snowflake/grpc/client"
 	grpcServer "github.com/Soul-Mate/yc-snowflake/grpc/server"
 	httpServer "github.com/Soul-Mate/yc-snowflake/http/server"
+	"github.com/Soul-Mate/yc-snowflake/logger"
 	"github.com/Soul-Mate/yc-snowflake/pb"
 	"github.com/Soul-Mate/yc-snowflake/snowflake"
 	"log"
@@ -20,15 +21,15 @@ const (
 	// 最大忍受时间发生回拨时常 单位(毫秒)
 	maxEndureMs = 5
 	// 最大系统时间误差 单位(毫秒)
-	maxSysTimeErrorMs        = 100
+	maxSysTimeErrorMs = 100
 )
 
 type YCSnowflake struct {
 	etcdService *etcd.EtcdService
 	conf        *config.Config
-	ctx    context.Context
-	cancel context.CancelFunc
-	logger *WrapLog
+	ctx         context.Context
+	cancel      context.CancelFunc
+	logger      *logger.WrapLog
 }
 
 func NewYCSnowflake() *YCSnowflake {
@@ -79,6 +80,15 @@ func (ysf *YCSnowflake) Start() {
 		log.Fatal(err)
 	}
 
+	// 初始化logger
+	l, err := logger.NewLogger(ysf.conf.LogFile)
+
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	ysf.logger = l
+
 	// 当前节点如果是新的worker：
 	// 通过rpc调用所有节点进行时间值校验
 	// 在etcd中设置新的节点信息
@@ -115,11 +125,15 @@ func (ysf *YCSnowflake) Start() {
 		}
 	}
 
-	// 定时上报系统时间戳
-	go ysf.reportTimestamp(ysf.ctx)
+	if err = ysf.etcdService.PutWorkerServerValue(ysf.conf.WorkerId, ysf.conf.GRpc.Host, ysf.conf.GRpc.Port); err != nil {
+		log.Fatal(err)
+	}
 
 	// 启动http server
 	go ysf.startHttpServer()
+
+	// 定时上报系统时间戳
+	go ysf.reportTimestamp(ysf.ctx)
 
 	// 启用 grpc server
 	if err = ysf.startGRpcServer(); err != nil {
@@ -147,18 +161,18 @@ func (ysf *YCSnowflake) checkSysTimestamp() error {
 	for _, node := range successWorkerServer {
 		rpcClient, err := client.NewClient(node.RPCHost, node.RPCPort, client.WithTimeout(time.Second*3))
 		if err != nil {
-			ysf.logger.Printf(LErr, "grpc client(%s:%s) init error: %v",
+			ysf.logger.Printf(logger.LErr, "grpc client(%s:%s) init error: %v",
 				node.RPCHost, node.RPCPort, err)
 		} else {
 			sysTimestamp, err := rpcClient.GetSysTimestamp()
 			if err != nil {
-				ysf.logger.Printf(LErr, "grpc client(%s:%s) call GetSysTimestamp error: %v",
+				ysf.logger.Printf(logger.LErr, "grpc client(%s:%s) call GetSysTimestamp error: %v",
 					node.RPCHost, node.RPCPort, err)
 			} else {
 				successWorkerSysTimestamp = append(successWorkerSysTimestamp, sysTimestamp)
 			}
 			if err = rpcClient.Close(); err != nil {
-				ysf.logger.Printf(LErr, "grpc client(%s:%s) close error: %v",
+				ysf.logger.Printf(logger.LErr, "grpc client(%s:%s) close error: %v",
 					node.RPCHost, node.RPCPort, err)
 			}
 		}
@@ -179,7 +193,7 @@ func (ysf *YCSnowflake) checkSysTimestamp() error {
 
 	avg = total / uint64(len(successWorkerSysTimestamp))
 
-	ysf.logger.Printf(LDebug, "求得平均值误差: %d", avg)
+	ysf.logger.Printf(logger.LDebug, "求得平均值误差: %d", avg)
 
 	// 误差在100毫秒以内
 	if math.Abs(float64(timestamp()-avg)) > maxSysTimeErrorMs {
@@ -196,12 +210,12 @@ func (ysf *YCSnowflake) reportTimestamp(ctx context.Context) {
 		select {
 		case <-t:
 			if err := ysf.etcdService.PutWorkerValue(ysf.conf.WorkerId); err != nil {
-				ysf.logger.Printf(LDebug, "[worker-%d]: report timestamp error: %v", err, ysf.conf.WorkerId)
+				ysf.logger.Printf(logger.LDebug, "[worker-%d]: report timestamp error: %v", err, ysf.conf.WorkerId)
 			} else {
-				ysf.logger.Printf(LDebug, "[worker-%d]: report timestamp success.", ysf.conf.WorkerId)
+				ysf.logger.Printf(logger.LDebug, "[worker-%d]: report timestamp success.", ysf.conf.WorkerId)
 			}
 		case <-ctx.Done():
-			ysf.logger.Printf(LDebug, "report done.")
+			ysf.logger.Printf(logger.LDebug, "report done.")
 			done = true
 		default:
 		}
