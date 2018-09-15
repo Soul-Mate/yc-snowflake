@@ -12,8 +12,8 @@ import (
 	"github.com/Soul-Mate/yc-snowflake/logger"
 	"github.com/Soul-Mate/yc-snowflake/pb"
 	"github.com/Soul-Mate/yc-snowflake/snowflake"
-	"log"
 	"math"
+	"os"
 	"time"
 )
 
@@ -36,7 +36,7 @@ func NewYCSnowflake() *YCSnowflake {
 	ysf := new(YCSnowflake)
 	ysf.conf = &config.Config{}
 	ysf.etcdService = etcd.NewEtcdService()
-
+	ysf.logger = logger.NewLogger(os.Stdout)
 	ysf.ctx, ysf.cancel = context.WithCancel(context.Background())
 	return ysf
 }
@@ -47,47 +47,38 @@ func (ysf *YCSnowflake) Start() {
 
 	// 如果指定了配置文件,则从配置文件中初始化程序
 	if err = ysf.conf.InitConfigFromFile(); err != nil {
-		log.Fatal(err)
+		ysf.logger.Error(err.Error())
 	}
 
 	// 验证worker id的有效性
 	if err = ysf.conf.CheckWorkerIdConfig(); err != nil {
-		log.Fatal(err)
+		ysf.logger.Error(err.Error())
 	}
 
 	// 初始化并验证rpc配置
 	if err = ysf.conf.InitRpcServiceConfig(); err != nil {
-		log.Fatal(err)
+		ysf.logger.Error(err.Error())
 	}
 
 	// 初始化并验证http配置
 	if err = ysf.conf.InitHttpServiceConfig(); err != nil {
-		log.Fatal(err)
+		ysf.logger.Error(err.Error())
 	}
 
 	// 初始化并验证etcd service
 	if err = ysf.conf.InitEtcdServiceConfig(); err != nil {
-		log.Fatal(err)
+		ysf.logger.Error(err.Error())
 	}
 
 	// 初始化etcd clientv3
 	if err = ysf.etcdService.InitClientv3(ysf.conf.Etcd); err != nil {
-		log.Fatal(err)
+		ysf.logger.Error(err.Error())
 	}
 
 	wv, err := ysf.etcdService.GetWorkerValue(ysf.conf.WorkerId)
 	if err != nil {
-		log.Fatal(err)
+		ysf.logger.Error(err.Error())
 	}
-
-	// 初始化logger
-	l, err := logger.NewLogger(ysf.conf.LogFile)
-
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	ysf.logger = l
 
 	// 当前节点如果是新的worker：
 	// 通过rpc调用所有节点进行时间值校验
@@ -99,12 +90,12 @@ func (ysf *YCSnowflake) Start() {
 	// 如果没有发生回拨, 则校验时间
 	if wv == nil {
 		if err = ysf.checkSysTimestamp(); err != nil {
-			log.Fatal(err)
+			ysf.logger.Error(err.Error())
 		}
 
 		// 设置新的worker 节点值
 		if err = ysf.etcdService.PutWorkerValue(ysf.conf.WorkerId); err != nil {
-			log.Fatal(err)
+			ysf.logger.Error(err.Error())
 		}
 
 	} else {
@@ -115,18 +106,23 @@ func (ysf *YCSnowflake) Start() {
 			if offset := wv.LastTimestamp - ts; offset < maxEndureMs {
 				time.Sleep(time.Millisecond * time.Duration(offset<<1))
 			} else {
-				log.Fatal(err)
+				ysf.logger.Error(err.Error())
 			}
 
 		} else {
 			if err = ysf.checkSysTimestamp(); err != nil {
-				log.Fatal(err)
+				ysf.logger.Error(err.Error())
 			}
 		}
 	}
 
 	if err = ysf.etcdService.PutWorkerServerValue(ysf.conf.WorkerId, ysf.conf.GRpc.Host, ysf.conf.GRpc.Port); err != nil {
-		log.Fatal(err)
+		ysf.logger.Error(err.Error())
+	}
+
+	// 日志输出追加到用户自定义文件
+	if err = ysf.logger.SetFileWriter(ysf.conf.LogFile); err != nil {
+		ysf.logger.Error(err.Error())
 	}
 
 	// 启动http server
@@ -137,7 +133,7 @@ func (ysf *YCSnowflake) Start() {
 
 	// 启用 grpc server
 	if err = ysf.startGRpcServer(); err != nil {
-		log.Fatal(err)
+		ysf.logger.Error(err.Error())
 	}
 }
 
@@ -161,18 +157,18 @@ func (ysf *YCSnowflake) checkSysTimestamp() error {
 	for _, node := range successWorkerServer {
 		rpcClient, err := client.NewClient(node.RPCHost, node.RPCPort, client.WithTimeout(time.Second*3))
 		if err != nil {
-			ysf.logger.Printf(logger.LErr, "grpc client(%s:%s) init error: %v",
+			ysf.logger.Printf(logger.LWarn, "grpc client(%s:%s) init error: %v",
 				node.RPCHost, node.RPCPort, err)
 		} else {
 			sysTimestamp, err := rpcClient.GetSysTimestamp()
 			if err != nil {
-				ysf.logger.Printf(logger.LErr, "grpc client(%s:%s) call GetSysTimestamp error: %v",
+				ysf.logger.Printf(logger.LWarn, "grpc client(%s:%s) call GetSysTimestamp error: %v",
 					node.RPCHost, node.RPCPort, err)
 			} else {
 				successWorkerSysTimestamp = append(successWorkerSysTimestamp, sysTimestamp)
 			}
 			if err = rpcClient.Close(); err != nil {
-				ysf.logger.Printf(logger.LErr, "grpc client(%s:%s) close error: %v",
+				ysf.logger.Printf(logger.LWarn, "grpc client(%s:%s) close error: %v",
 					node.RPCHost, node.RPCPort, err)
 			}
 		}
@@ -249,8 +245,7 @@ func (ysf *YCSnowflake) startGRpcServer() error {
 func (ysf *YCSnowflake) startHttpServer() error {
 	if ysf.conf.Http.ClientAuth {
 		return httpServer.Server(ysf.conf.Http.Host, ysf.conf.Http.Port, ysf.conf.WorkerId,
-			httpServer.WithRootCA(ysf.conf.Http.CaFile),
-			httpServer.WithTLS(ysf.conf.Http.CertFile, ysf.conf.Http.KeyFile))
+			httpServer.WithClientAuth(ysf.conf.Http.CaFile, ysf.conf.Http.CertFile, ysf.conf.Http.KeyFile))
 
 	} else if ysf.conf.Http.CertFile != "" && ysf.conf.Http.KeyFile != "" {
 		return httpServer.Server(ysf.conf.Http.Host, ysf.conf.Http.Port, ysf.conf.WorkerId,
@@ -260,3 +255,4 @@ func (ysf *YCSnowflake) startHttpServer() error {
 		return httpServer.Server(ysf.conf.Http.Host, ysf.conf.Http.Port, ysf.conf.WorkerId)
 	}
 }
+

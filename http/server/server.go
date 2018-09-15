@@ -27,10 +27,12 @@ func WithTLS(certFile, keyFile string) ServerOption {
 	}
 }
 
-func WithRootCA(caFile string) ServerOption {
+func WithClientAuth(caFile , certFile, keyFile string) ServerOption {
 	return func(opt *options) {
-		opt.clientAuth = true
 		opt.caFile = caFile
+		opt.caFile = certFile
+		opt.keyFile = keyFile
+		opt.clientAuth = true
 	}
 }
 

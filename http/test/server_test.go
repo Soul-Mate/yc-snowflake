@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-func Test_HttpServer(t *testing.T)  {
+func Test_HttpServer(t *testing.T) {
 	err := server.Server("", "8887", 2)
 	if err != nil {
 		t.Error(err)
@@ -14,8 +14,7 @@ func Test_HttpServer(t *testing.T)  {
 
 func Test_HttpsServer(t *testing.T) {
 	err := server.Server("", "8888", 1,
-		server.WithTLS("./server.pem", "./server-key.pem"),
-		server.WithRootCA("./ca.pem"))
+		server.WithClientAuth("./ca.pem", "./server.pem", "./server-key.pem"))
 	if err != nil {
 		t.Error(err)
 	}

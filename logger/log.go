@@ -1,6 +1,7 @@
 package logger
 
 import (
+	"io"
 	"log"
 	"os"
 )
@@ -20,45 +21,83 @@ const (
 )
 
 type WrapLog struct {
-	path   string
-	writer *os.File
+	writer io.Writer
 }
 
-func NewLogger(path string) (*WrapLog, error) {
-	l := new(WrapLog)
-	if path == "" {
-		l.writer = os.Stdout
-		return l, nil
-	}
+func (l *WrapLog) SetWriter(w io.Writer) {
+	l.writer = w
+}
 
-	l.path = path
-	_, err := os.Stat(l.path);
+func (l *WrapLog) SetFileWriter(file string) error {
+	if file == "" {
+		return nil
+	}
+	_, err := os.Stat(file)
 	if err == nil {
-		f, err := os.OpenFile(l.path, os.O_WRONLY|os.O_APPEND, 0644)
+		f, err := os.OpenFile(file, os.O_WRONLY|os.O_APPEND, 0644)
 		if err != nil {
-			return nil, err
+			return err
 		}
 		l.writer = f
-		return l, nil
+		return err
 	} else {
 		if os.IsNotExist(err) {
-			if fd, err := os.Create(l.path); err != nil {
-				return nil, err
+			if fd, err := os.Create(file); err != nil {
+				return err
 			} else {
 				l.writer = fd
-				return l, nil
+				return nil
 			}
 		} else if os.IsExist(err) {
-			f, err := os.OpenFile(l.path, os.O_WRONLY|os.O_APPEND, 0644)
+			f, err := os.OpenFile(file, os.O_WRONLY|os.O_APPEND, 0644)
 			if err != nil {
-				return nil, err
+				return err
 			}
 			l.writer = f
-			return l, nil
+			return nil
 		} else {
-			return nil, err
+			return err
 		}
 	}
+}
+
+func NewLogger(w io.Writer) *WrapLog {
+	l := new(WrapLog)
+	l.writer = w
+	//if path == "" {
+	//	l.writer = os.Stdout
+	//	return l, nil
+	//}
+	//
+	//l.path = path
+	//_, err := os.Stat(l.path);
+	//if err == nil {
+	//	f, err := os.OpenFile(l.path, os.O_WRONLY|os.O_APPEND, 0644)
+	//	if err != nil {
+	//		return nil, err
+	//	}
+	//	l.writer = f
+	//	return l, nil
+	//} else {
+	//	if os.IsNotExist(err) {
+	//		if fd, err := os.Create(l.path); err != nil {
+	//			return nil, err
+	//		} else {
+	//			l.writer = fd
+	//			return l, nil
+	//		}
+	//	} else if os.IsExist(err) {
+	//		f, err := os.OpenFile(l.path, os.O_WRONLY|os.O_APPEND, 0644)
+	//		if err != nil {
+	//			return nil, err
+	//		}
+	//		l.writer = f
+	//		return l, nil
+	//	} else {
+	//		return nil, err
+	//	}
+	//}
+	return l
 }
 
 func (l *WrapLog) Printf(level int, format string, v ...interface{}) {
@@ -83,6 +122,7 @@ func (l *WrapLog) Warning(format string, v ...interface{}) {
 
 func (l *WrapLog) Error(format string, v ...interface{}) {
 	l.createLevelLog(LErr).Printf(format, v...)
+	os.Exit(1)
 }
 
 func (l *WrapLog) createLevelLog(level int) *log.Logger {
