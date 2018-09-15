@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"github.com/Soul-Mate/yc-snowflake/config"
 	"github.com/Soul-Mate/yc-snowflake/etcd"
-	"github.com/Soul-Mate/yc-snowflake/grpc/client"
+	grpcClient "github.com/Soul-Mate/yc-snowflake/grpc/client"
 	grpcServer "github.com/Soul-Mate/yc-snowflake/grpc/server"
 	httpServer "github.com/Soul-Mate/yc-snowflake/http/server"
 	"github.com/Soul-Mate/yc-snowflake/logger"
@@ -155,7 +155,7 @@ func (ysf *YCSnowflake) checkSysTimestamp() error {
 	}
 
 	for _, node := range successWorkerServer {
-		rpcClient, err := client.NewClient(node.RPCHost, node.RPCPort, client.WithTimeout(time.Second*3))
+		rpcClient, err := ysf.createGRpcClient()
 		if err != nil {
 			ysf.logger.Printf(logger.LWarn, "grpc client(%s:%s) init error: %v",
 				node.RPCHost, node.RPCPort, err)
@@ -256,3 +256,11 @@ func (ysf *YCSnowflake) startHttpServer() error {
 	}
 }
 
+func (ysf *YCSnowflake) createGRpcClient() (*grpcClient.Client, error) {
+	if ysf.conf.GRpc.EnableTls {
+		return grpcClient.NewClient(ysf.conf.GRpc.Host, ysf.conf.GRpc.Port,
+			grpcClient.WithCredentials(ysf.conf.GRpc.CertFile, ysf.conf.GRpc.ServerName))
+	}
+
+	return grpcClient.NewClient(ysf.conf.GRpc.Host, ysf.conf.GRpc.Port)
+}

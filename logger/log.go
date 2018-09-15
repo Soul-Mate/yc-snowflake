@@ -64,39 +64,6 @@ func (l *WrapLog) SetFileWriter(file string) error {
 func NewLogger(w io.Writer) *WrapLog {
 	l := new(WrapLog)
 	l.writer = w
-	//if path == "" {
-	//	l.writer = os.Stdout
-	//	return l, nil
-	//}
-	//
-	//l.path = path
-	//_, err := os.Stat(l.path);
-	//if err == nil {
-	//	f, err := os.OpenFile(l.path, os.O_WRONLY|os.O_APPEND, 0644)
-	//	if err != nil {
-	//		return nil, err
-	//	}
-	//	l.writer = f
-	//	return l, nil
-	//} else {
-	//	if os.IsNotExist(err) {
-	//		if fd, err := os.Create(l.path); err != nil {
-	//			return nil, err
-	//		} else {
-	//			l.writer = fd
-	//			return l, nil
-	//		}
-	//	} else if os.IsExist(err) {
-	//		f, err := os.OpenFile(l.path, os.O_WRONLY|os.O_APPEND, 0644)
-	//		if err != nil {
-	//			return nil, err
-	//		}
-	//		l.writer = f
-	//		return l, nil
-	//	} else {
-	//		return nil, err
-	//	}
-	//}
 	return l
 }
 
